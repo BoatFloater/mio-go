@@ -5,18 +5,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const offsetV1 = 0x0
 const offsetV2 = 0x3000
-
 const offsetVersionSearch = 0x14
+
 const offsetBrand = 0x35
 const offsetName = 0x1C
+const offsetAuthor = 0x48
+const offsetCode = 0xCF
+const offsetItemNumber = 0xD4
+const offsetItemRevision = 0xD
 
 const lenVersionStr = 4
 const lenBrand = 9
 const lenName = 0x18
+const lenAuthor = 0x18
 
 type medium struct {
 	dataName  string
@@ -28,6 +34,7 @@ type medium struct {
 var debug bool
 var overwrite bool
 var outdir string
+var format string
 
 func main() {
 	mediumMicrogame := &medium{
@@ -54,6 +61,7 @@ func main() {
 	flag.BoolVar(&debug, "debug", false, "Enable debug output")
 	flag.BoolVar(&overwrite, "overwrite", true, "Overwrite existing files")
 	flag.StringVar(&outdir, "outdir", "out", "Output directory")
+	flag.StringVar(&format, "format", "{code} - {name}", "Filename format; available variables are {name}, {brand}, {author}, {code}")
 	flag.Parse()
 
 	fileName := flag.Arg(0)
@@ -61,6 +69,7 @@ func main() {
 	if len(fileName) == 0 {
 		fmt.Printf("Usage: %s [flags] savefile\nFlags:\n", filepath.Base(os.Args[0]))
 		flag.PrintDefaults()
+		return
 	}
 
 	file, err := os.Open(fileName)
@@ -146,8 +155,24 @@ func dumpItem(file *os.File, itemOffset byte, medium *medium) {
 
 	brand := readBrand(file, itemOffset, medium)
 	name := readName(file, itemOffset, medium)
+	author := readAuthor(file, itemOffset, medium)
 
-	fileName := fmt.Sprintf("%v/%v-%04d - %v.mio", dirPath, brand, itemOffset, name)
+	code := readCode(file, itemOffset, medium)
+	number := readInt(file, itemOffset, offsetItemNumber, medium) + 1
+	revision := readInt(file, itemOffset, offsetItemRevision, medium)
+	fullcode := fmt.Sprintf("G-%v-%04d-%03d", code, number, revision)
+
+	strstr := format
+	strstr = strings.Replace(strstr, "{code}", fullcode, 1)
+	strstr = strings.Replace(strstr, "{brand}", brand, 1)
+	strstr = strings.Replace(strstr, "{name}", name, 1)
+	strstr = strings.Replace(strstr, "{author}", author, 1)
+
+	if debug {
+		fmt.Printf("%v\n", strstr)
+	}
+
+	fileName := fmt.Sprintf("%v/%v.mio", dirPath, strstr)
 
 	// if fileName exists, return
 	if _, err := os.Stat(fileName); err == nil {
@@ -183,6 +208,14 @@ func readName(file *os.File, itemOffset byte, medium *medium) string {
 	return readString(file, itemOffset, offsetName, lenName, medium)
 }
 
+func readAuthor(file *os.File, itemOffset byte, medium *medium) string {
+	return readString(file, itemOffset, offsetAuthor, lenAuthor, medium)
+}
+
+func readCode(file *os.File, itemOffset byte, medium *medium) string {
+	return strings.ToUpper(readString(file, itemOffset, offsetCode, 4, medium))
+}
+
 func readString(file *os.File, itemOffset byte, dataOffset uint32, size int, medium *medium) string {
 	datum := make([]byte, 0)
 	offset := getItemPos(itemOffset, medium) + dataOffset
@@ -198,6 +231,13 @@ func readString(file *os.File, itemOffset byte, dataOffset uint32, size int, med
 		datum = append(datum, b[0])
 	}
 	return string(datum)
+}
+
+func readInt(file *os.File, itemOffset byte, dataOffset uint32, medium *medium) int {
+	bytes := make([]byte, 1)
+	offset := getItemPos(itemOffset, medium) + dataOffset
+	file.ReadAt(bytes, int64(offset))
+	return int(bytes[0])
 }
 
 // make a function to compare two byte arrays
