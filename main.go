@@ -17,7 +17,7 @@ const offsetName = 0x1C
 const offsetAuthor = 0x48
 const offsetCode = 0xCF
 const offsetItemNumber = 0xD4
-const offsetItemRevision = 0xD
+const offsetItemRevision = 0xD8
 
 const lenVersionStr = 4
 const lenBrand = 9
@@ -35,6 +35,7 @@ var debug bool
 var overwrite bool
 var outdir string
 var format string
+var dryrun bool
 
 func main() {
 	mediumMicrogame := &medium{
@@ -62,6 +63,7 @@ func main() {
 	flag.BoolVar(&overwrite, "overwrite", true, "Overwrite existing files")
 	flag.StringVar(&outdir, "outdir", "out", "Output directory")
 	flag.StringVar(&format, "format", "{code} - {name}", "Filename format; available variables are {name}, {brand}, {author}, {code}")
+	flag.BoolVar(&dryrun, "dry", false, "Dry run")
 	flag.Parse()
 
 	fileName := flag.Arg(0)
@@ -77,6 +79,7 @@ func main() {
 		fmt.Printf("error opening file %v\n", fileName)
 		return
 	}
+	defer file.Close()
 
 	checkIsSav := []byte{0x0E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x44, 0x53, 0x4D, 0x49, 0x4F, 0x5F, 0x53}
 	testIsSav := make([]byte, len(checkIsSav))
@@ -158,8 +161,8 @@ func dumpItem(file *os.File, itemOffset byte, medium *medium) {
 	author := readAuthor(file, itemOffset, medium)
 
 	code := readCode(file, itemOffset, medium)
-	number := readInt(file, itemOffset, offsetItemNumber, medium) + 1
-	revision := readInt(file, itemOffset, offsetItemRevision, medium)
+	number := readItemNumber(file, itemOffset, medium)
+	revision := readItemRevision(file, itemOffset, medium)
 	fullcode := fmt.Sprintf("G-%v-%04d-%03d", code, number, revision)
 
 	strstr := format
@@ -173,6 +176,11 @@ func dumpItem(file *os.File, itemOffset byte, medium *medium) {
 	}
 
 	fileName := fmt.Sprintf("%v/%v.mio", dirPath, strstr)
+
+	if dryrun {
+		fmt.Printf("Found %v\n", fileName)
+		return
+	}
 
 	// if fileName exists, return
 	if _, err := os.Stat(fileName); err == nil {
@@ -216,6 +224,14 @@ func readCode(file *os.File, itemOffset byte, medium *medium) string {
 	return strings.ToUpper(readString(file, itemOffset, offsetCode, 4, medium))
 }
 
+func readItemNumber(file *os.File, itemOffset byte, medium *medium) uint32 {
+	return readAugmentedInt(file, itemOffset, offsetItemNumber, medium) + 1
+}
+
+func readItemRevision(file *os.File, itemOffset byte, medium *medium) uint32 {
+	return readAugmentedInt(file, itemOffset, offsetItemRevision, medium) // todo confirm this
+}
+
 func readString(file *os.File, itemOffset byte, dataOffset uint32, size int, medium *medium) string {
 	datum := make([]byte, 0)
 	offset := getItemPos(itemOffset, medium) + dataOffset
@@ -233,11 +249,11 @@ func readString(file *os.File, itemOffset byte, dataOffset uint32, size int, med
 	return string(datum)
 }
 
-func readInt(file *os.File, itemOffset byte, dataOffset uint32, medium *medium) int {
-	bytes := make([]byte, 1)
+func readAugmentedInt(file *os.File, itemOffset byte, dataOffset uint32, medium *medium) uint32 {
+	bytes := make([]byte, 2)
 	offset := getItemPos(itemOffset, medium) + dataOffset
 	file.ReadAt(bytes, int64(offset))
-	return int(bytes[0])
+	return (uint32(bytes[1]) * 256) + uint32(bytes[0])
 }
 
 // make a function to compare two byte arrays
